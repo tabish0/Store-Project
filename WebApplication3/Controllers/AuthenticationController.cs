@@ -42,7 +42,7 @@ namespace WebApplication3.Controllers
         [Route("Login")]
         public async Task<IActionResult> Login(LoginUser obj)
         {
-            ServiceResponse<string> response = new ServiceResponse<string>();
+            ServiceResponse<AuthenticationResult> response = new ServiceResponse<AuthenticationResult>();
             response = await authenticationService.Login(obj);
             if (response.Success == true)
             {
@@ -54,5 +54,36 @@ namespace WebApplication3.Controllers
             }
         }
 
+        [HttpPost]
+        [Route("Refresh")]
+        public async Task<IActionResult> Refresh(TokenToRefresh obj)
+        {
+            ServiceResponse<AuthenticationResult> response = new ServiceResponse<AuthenticationResult>();
+            response = await authenticationService.RefreshToken(obj);
+            if (response.Success == true)
+            {
+                return Ok(response);
+            }
+            else
+            {
+                return BadRequest();
+            }
+        }
+
+        [HttpPost]
+        [Route("Logout")]
+        public async Task<IActionResult> Logout()
+        {
+            ServiceResponse<string> response = new ServiceResponse<string>();
+            response = await authenticationService.Logout();
+            if (response.Success == true)
+            {
+                return Ok(response);
+            }
+            else
+            {
+                return BadRequest();
+            }
+        }
     }
 }

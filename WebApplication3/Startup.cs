@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -46,6 +47,8 @@ namespace WebApplication3
                    ValidateAudience = false
                };
            });
+            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+            services.AddScoped<IRefreshTokenGenerator, RefreshTokenGenerator>();
             services.AddScoped<IAuthenticationService, AuthenticationService>();
             services.AddScoped<IGenericService<GetItem, AddItem>, ItemService>();
             services.AddScoped<IGenericService<GetCategory, AddCategory>, CategoryService>();
@@ -71,6 +74,8 @@ namespace WebApplication3
             app.UseHttpsRedirection();
 
             app.UseRouting();
+
+            app.UseAuthentication();
 
             app.UseAuthorization();
 

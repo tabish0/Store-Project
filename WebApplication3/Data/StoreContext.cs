@@ -23,10 +23,17 @@ namespace WebApplication3.Data
 
             modelBuilder.Entity<Category>().HasKey(C => C.CategoryId);
             modelBuilder.Entity<User>().HasKey(U => U.UserId);
+            modelBuilder.Entity<RefreshToken>().HasKey(R => R.UserID);
+            modelBuilder.Entity<RefreshToken>().HasOne(R => R.User)
+                                               .WithOne(U => U.RefreshToken)
+                                               .HasForeignKey<RefreshToken>(R => R.UserID);
+            modelBuilder.Entity<RefreshToken>().Property(R => R.ExpiryDate)
+                                               .HasColumnType("datetime2");
         }
 
         public DbSet<Item> Items { get; set; }
         public DbSet<Category> Categories { get; set; }
         public DbSet<User> Users { get; set; }
+        public DbSet<RefreshToken> refreshTokens { get; set; }
     }
 }

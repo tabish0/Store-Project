@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System;
@@ -18,12 +19,18 @@ namespace WebApplication3.Service
     {
         private readonly StoreContext context;
         private readonly IConfiguration configuration;
+        private readonly IRefreshTokenGenerator refreshTokenGenerator;
+        private readonly IHttpContextAccessor httpContextAcccessor;
 
-        public AuthenticationService(StoreContext context, IConfiguration configuration)
+        public AuthenticationService(StoreContext context, IConfiguration configuration, IRefreshTokenGenerator refreshTokenGenerator, IHttpContextAccessor httpContextAcccessor)
         {
             this.context = context;
             this.configuration = configuration;
+            this.refreshTokenGenerator = refreshTokenGenerator;
+            this.httpContextAcccessor = httpContextAcccessor;
         }
+
+        int GetUserId() => int.Parse(httpContextAcccessor.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier));
 
         public async Task<ServiceResponse<int>> Register(RegisterUser obj)
         {
@@ -71,9 +78,9 @@ namespace WebApplication3.Service
             }
         }
 
-        public async Task<ServiceResponse<string>> Login(LoginUser obj)
+        public async Task<ServiceResponse<AuthenticationResult>> Login(LoginUser obj)
         {
-            ServiceResponse<string> response = new ServiceResponse<string>();
+            ServiceResponse<AuthenticationResult> response = new ServiceResponse<AuthenticationResult>();
             User user = await context.Users.FirstOrDefaultAsync(u => u.UserName.ToLower() == obj.UserName.ToLower());
             if (user == null)
             {
@@ -84,6 +91,25 @@ namespace WebApplication3.Service
             if (VerifyPassword(obj.Password, user.PasswordHash, user.PasswordSalt) == true)
             {
                 response.Data = CreateToken(user);
+                RefreshToken token = await context.refreshTokens.FirstOrDefaultAsync(R => R.UserID == user.UserId);
+                if (token == null)
+                {
+                    RefreshToken refreshToken = new RefreshToken()
+                    {
+                        UserID = user.UserId,
+                        Token = response.Data.RefreshToken,
+                        IsBlackListed = false,
+                        User = user
+                    };
+                    await context.refreshTokens.AddAsync(refreshToken);
+                    await context.SaveChangesAsync();
+                }
+                else
+                {
+                    token.Token = response.Data.RefreshToken;
+                    context.refreshTokens.Update(token); ;
+                    await context.SaveChangesAsync();
+                }
                 response.Message = "Found";
             }
             return response;
@@ -103,7 +129,7 @@ namespace WebApplication3.Service
         }
 
 
-        private string CreateToken(User user)
+        private AuthenticationResult CreateToken(User user)
         {
             List<Claim> claims = new List<Claim>
             {
@@ -128,7 +154,97 @@ namespace WebApplication3.Service
 
             SecurityToken token = tokenHandler.CreateToken(tokenDescriptor);
 
-            return tokenHandler.WriteToken(token);
+            string refreshtoken = refreshTokenGenerator.GenerateToken();
+
+            return new AuthenticationResult()
+            {
+                JwtToken = tokenHandler.WriteToken(token),
+                RefreshToken = refreshtoken
+            };
+        }
+
+        private ServiceResponse<AuthenticationResult> CreateRefreshedToken(User user, Claim[] claims)
+        {
+
+            SymmetricSecurityKey key = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(configuration.GetSection("AppSettings:Token").Value));
+
+            SigningCredentials cred = new SigningCredentials(key, SecurityAlgorithms.HmacSha512Signature);
+
+
+            SecurityTokenDescriptor tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(claims),
+                SigningCredentials = cred,
+                Expires = DateTime.UtcNow.AddSeconds(50)
+            };
+
+            JwtSecurityTokenHandler tokenHandler = new JwtSecurityTokenHandler();
+
+            SecurityToken token = tokenHandler.CreateToken(tokenDescriptor);
+
+            string refreshtoken = refreshTokenGenerator.GenerateToken();
+
+            AuthenticationResult result = new AuthenticationResult()
+            {
+                JwtToken = tokenHandler.WriteToken(token),
+                RefreshToken = refreshtoken
+            };
+
+            ServiceResponse<AuthenticationResult> response = new ServiceResponse<AuthenticationResult>();
+            response.Data = result;
+
+            return response;
+        }
+
+        public async Task<ServiceResponse<AuthenticationResult>> RefreshToken(TokenToRefresh obj)
+        {
+            ServiceResponse<AuthenticationResult> response = new ServiceResponse<AuthenticationResult>();
+            SecurityToken validationToken;
+            var tokenhandler = new JwtSecurityTokenHandler();
+            var principal = tokenhandler.ValidateToken(obj.JwtToken, new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration.GetSection("AppSettings:Token").Value)),
+                ValidateIssuer = false,
+                ValidateAudience = false
+            }, out validationToken);
+
+            var Jwttoken = validationToken as JwtSecurityToken;
+
+            var username = principal.Identity.Name;
+
+            User user = await context.Users.FirstOrDefaultAsync(U => U.UserName.ToLower() == username.ToLower());
+
+            RefreshToken orginaltoken = await context.refreshTokens.FirstOrDefaultAsync(R => R.UserID == user.UserId);
+
+            if (orginaltoken.IsBlackListed == true)
+            {
+                throw new Exception("Login First");
+            }
+
+            if (obj.refreshToken != orginaltoken.Token)
+            {
+                throw new Exception("Tokens Do Not Match");
+            }
+
+            return (CreateRefreshedToken(user, principal.Claims.ToArray()));
+
+        }
+
+        public async Task<ServiceResponse<string>> Logout()
+        {
+            ServiceResponse<string> response = new ServiceResponse<string>();
+            User user = new User();
+
+            user = await context.Users.FirstAsync(u => u.UserId == GetUserId());
+            RefreshToken orginaltoken = await context.refreshTokens.FirstOrDefaultAsync(R => R.UserID == user.UserId);
+
+            orginaltoken.IsBlackListed = true;
+            context.refreshTokens.Update(orginaltoken);
+            await context.SaveChangesAsync();
+            response.Message = "You are logged out";
+            return response;
         }
     }
 }
